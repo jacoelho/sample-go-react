@@ -33,26 +33,28 @@ func (c *customFs) Open(name string) (http.File, error) {
 	return f, err
 }
 
-func WithNotFoundFallback(root http.FileSystem, fallback string) http.Handler {
-	f := &customFs{
+func WithNotFoundFallbackFileSystem(root http.FileSystem, fallback string) http.FileSystem {
+	return &customFs{
 		fs:       root,
 		fallback: fallback,
 	}
+}
 
-	return http.FileServer(f)
+func FileServer(contents fs.FS) http.Handler {
+	return http.FileServer(WithNotFoundFallbackFileSystem(http.FS(contents), "index.html"))
 }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	contents, err := fs.Sub(client.Content, "build")
+	contents, err := client.Contents()
 	if err != nil {
 		log.Fatalf("failed to find assets: %v", err)
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/", WithNotFoundFallback(http.FS(contents), "index.html"))
+	mux.Handle("/", FileServer(contents))
 	mux.HandleFunc("/api", api)
 
 	server := &http.Server{
@@ -63,10 +65,10 @@ func main() {
 	go func() {
 		<-ctx.Done()
 
-		cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if err := server.Shutdown(cancelCtx); err != nil {
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			log.Printf("shutdown error: %v", err)
 		}
 	}()
